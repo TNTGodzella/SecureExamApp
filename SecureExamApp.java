@@ -1,11 +1,15 @@
 package com.exam;
 
+import com.mongodb.client.MongoCollection;
+import org.bson.Document;
+
 import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.time.LocalDateTime;
 import java.util.regex.Pattern;
 
 public class SecureExamApp {
@@ -14,7 +18,7 @@ public class SecureExamApp {
     }
 }
 
-// ------------------- LOGIN -------------------
+// ------------------- LOGIN WINDOW -------------------
 class LoginWindow {
     private JFrame frame;
     private JTextField emailField;
@@ -24,7 +28,7 @@ class LoginWindow {
     public LoginWindow() {
         frame = new JFrame("Login");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setSize(400, 250);
+        frame.setSize(400, 300);
         frame.setLocationRelativeTo(null);
         frame.setResizable(false);
 
@@ -59,6 +63,14 @@ class LoginWindow {
         gbc.gridy = 3;
         panel.add(loginBtn, gbc);
 
+        JButton historyBtn = new JButton("View History");
+        historyBtn.setBackground(new Color(100, 149, 237));
+        historyBtn.setForeground(Color.WHITE);
+        historyBtn.addActionListener(e -> openHistory());
+
+        gbc.gridy = 4;
+        panel.add(historyBtn, gbc);
+
         frame.add(panel);
         frame.setVisible(true);
     }
@@ -78,11 +90,30 @@ class LoginWindow {
         }
 
         if (email.equals("student@gmail.com") && pass.equals("exam123")) {
+            logLoginAttempt(email, true);
             frame.dispose();
-            new PhotoUploadWindow();
+            new PhotoUploadWindow(email);
         } else {
+            logLoginAttempt(email, false);
             errorLabel.setText("Invalid credentials.");
         }
+    }
+
+    private void openHistory() {
+        String email = emailField.getText().trim();
+        if (!email.isEmpty() && Pattern.matches("^[\\w.-]+@[\\w.-]+\\.[a-zA-Z]{2,}$", email)) {
+            new HistoryWindow(email);
+        } else {
+            JOptionPane.showMessageDialog(frame, "Enter a valid email to view history.");
+        }
+    }
+
+    private void logLoginAttempt(String email, boolean success) {
+        MongoCollection<Document> logins = MongoDBUtil.getDatabase().getCollection("login_attempts");
+        Document doc = new Document("email", email)
+                .append("success", success)
+                .append("timestamp", LocalDateTime.now().toString());
+        logins.insertOne(doc);
     }
 }
 
@@ -91,8 +122,11 @@ class PhotoUploadWindow {
     private JFrame frame;
     private JLabel imageLabel;
     private BufferedImage selectedImage;
+    private final String userEmail;
 
-    public PhotoUploadWindow() {
+    public PhotoUploadWindow(String email) {
+        this.userEmail = email;
+
         frame = new JFrame("Upload Photo");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setSize(600, 500);
@@ -135,7 +169,7 @@ class PhotoUploadWindow {
 
         continueBtn.addActionListener(e -> {
             frame.dispose();
-            new SecureExamWindow();
+            new SecureExamWindow(userEmail);
         });
     }
 }
@@ -144,6 +178,7 @@ class PhotoUploadWindow {
 class SecureExamWindow {
     private final JFrame frame;
     private final GraphicsDevice gd;
+    private final String userEmail;
     private int currentQuestion = 0;
     private int cheatCount = 0;
 
@@ -171,7 +206,9 @@ class SecureExamWindow {
     private final JButton nextBtn = new JButton("Next");
     private final JButton prevBtn = new JButton("Previous");
 
-    public SecureExamWindow() {
+    public SecureExamWindow(String email) {
+        this.userEmail = email;
+
         frame = new JFrame("Exam");
         frame.setUndecorated(true);
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
@@ -219,7 +256,6 @@ class SecureExamWindow {
         });
 
         submitBtn.addActionListener(e -> autoSubmit());
-
         exitBtn.addActionListener(e -> {
             int confirm = JOptionPane.showConfirmDialog(frame, "Submit and exit?", "Confirm", JOptionPane.YES_NO_OPTION);
             if (confirm == JOptionPane.YES_OPTION) autoSubmit();
@@ -278,11 +314,23 @@ class SecureExamWindow {
         saveAnswer();
         gd.setFullScreenWindow(null);
         frame.dispose();
+
         int score = 0;
         for (int i = 0; i < questions.length; i++) {
             if (selectedAnswers[i] - 1 == correctAnswers[i]) score++;
         }
+
+        logExamResult(score);
         new ResultWindow(score, questions.length);
+    }
+
+    private void logExamResult(int score) {
+        MongoCollection<Document> collection = MongoDBUtil.getDatabase().getCollection("exam_results");
+        Document doc = new Document("email", userEmail)
+                .append("score", score)
+                .append("cheatAttempts", cheatCount)
+                .append("timestamp", LocalDateTime.now().toString());
+        collection.insertOne(doc);
     }
 }
 
@@ -301,7 +349,6 @@ class ResultWindow {
         JLabel msg = new JLabel("Your exam has been submitted!", SwingConstants.CENTER);
         JLabel scoreLabel = new JLabel("Score: " + score + "/" + total, SwingConstants.CENTER);
         JLabel resultLabel = new JLabel(score >= 3 ? "✅ Passed" : "❌ Failed", SwingConstants.CENTER);
-
         resultLabel.setForeground(score >= 3 ? Color.GREEN.darker() : Color.RED);
 
         panel.add(msg);
